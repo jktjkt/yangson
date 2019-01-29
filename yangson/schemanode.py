@@ -54,7 +54,7 @@ from .exceptions import (
     YangsonException, YangTypeError)
 from .instvalue import (
     ArrayValue, EntryValue, MetadataObject, ObjectValue, Value)
-from .schemadata import IdentityAdjacency, SchemaContext
+from .schemadata import IdentityAdjacency, SchemaContext, SchemaData
 from .schpattern import (ChoicePattern, ConditionalPattern, Empty, Member,
                          NotAllowed, Pair, SchemaPattern)
 from .statement import Statement
@@ -97,7 +97,7 @@ class SchemaNode:
     @property
     def qual_name(self) -> QualName:
         """Qualified name of the receiver."""
-        return (self.name, self.ns)
+        return self.name, self.ns
 
     @property
     def config(self) -> bool:
@@ -165,7 +165,7 @@ class SchemaNode:
     def _yang_class(self) -> str:
         return self.__class__.__name__[:-4].lower()
 
-    def _node_digest(self) -> Dict[str, Any]:
+    def node_digest(self) -> Dict[str, Any]:
         """Return dictionary of receiver's properties suitable for clients."""
         res = {"kind": self._yang_class()}
         if self.mandatory:
@@ -202,7 +202,7 @@ class SchemaNode:
     def _flatten(self) -> List["SchemaNode"]:
         return [self]
 
-    def _handle_substatements(self, stmt: Statement, sctx: SchemaContext) -> None:
+    def handle_substatements(self, stmt: Statement, sctx: SchemaContext) -> None:
         """Dispatch actions for substatements of `stmt`."""
         for s in stmt.substatements:
             if s.prefix:
@@ -270,7 +270,7 @@ class SchemaNode:
         elif stmt.argument == "false":
             self._mandatory = False
 
-    def _post_process(self) -> None:
+    def post_process(self) -> None:
         pass
 
     def _is_identityref(self) -> bool:
@@ -450,15 +450,15 @@ class InternalNode(SchemaNode):
                 raise AnnotationTypeError(jptr, mem, an.type.error_message)
         return res
 
-    def _node_digest(self) -> Dict[str, Any]:
-        res = super()._node_digest()
+    def node_digest(self) -> Dict[str, Any]:
+        res = super().node_digest()
         rc = res["children"] = {}
         for c in self.data_children():
-            cdig = rc[c.iname()] = c._node_digest()
+            cdig = rc[c.iname()] = c.node_digest()
             if self.config and not c.config:
                 cdig["config"] = False
         for c in [c for c in self.children if isinstance(c, SchemaTreeNode)]:
-            rc[c.iname()] = c._node_digest()
+            rc[c.iname()] = c.node_digest()
         return res
 
     def _validate(self, inst: "InstanceNode", scope: ValidationScope,
@@ -495,12 +495,12 @@ class InternalNode(SchemaNode):
             raise SchemaError(inst.json_pointer(), "missing-data",
                               "expected " + msg + ", ".join([repr(m) for m in mms]))
 
-    def _make_schema_patterns(self) -> None:
+    def make_schema_patterns(self) -> None:
         """Build schema pattern for the receiver and its data descendants."""
         self.schema_pattern = self._schema_pattern()
         for dc in self.data_children():
             if isinstance(dc, InternalNode):
-                dc._make_schema_patterns()
+                dc.make_schema_patterns()
 
     def _schema_pattern(self) -> SchemaPattern:
         todo = [c for c in self.children
@@ -512,10 +512,10 @@ class InternalNode(SchemaNode):
             prev = Pair(c._pattern_entry(), prev)
         return ConditionalPattern(prev, self.when) if self.when else prev
 
-    def _post_process(self) -> None:
-        super()._post_process()
+    def post_process(self) -> None:
+        super().post_process()
         for c in self.children:
-            c._post_process()
+            c.post_process()
 
     def _add_mandatory_child(self, node: SchemaNode) -> None:
         """Add `node` to the set of mandatory children."""
@@ -547,9 +547,9 @@ class InternalNode(SchemaNode):
         node.ns = sctx.default_ns
         node._get_description(stmt)
         self._add_child(node)
-        node._handle_substatements(stmt, sctx)
+        node.handle_substatements(stmt, sctx)
 
-    def _augment_stmt(self, stmt: Statement, sctx: SchemaContext) -> None:
+    def augment_stmt(self, stmt: Statement, sctx: SchemaContext) -> None:
         """Handle **augment** statement."""
         if not sctx.schema_data.if_features(stmt, sctx.text_mid):
             return
@@ -559,7 +559,7 @@ class InternalNode(SchemaNode):
             gr = GroupNode()
             target._add_child(gr)
             target = gr
-        target._handle_substatements(stmt, sctx)
+        target.handle_substatements(stmt, sctx)
 
     def _refine_stmt(self, stmt: Statement, sctx: SchemaContext) -> None:
         """Handle **refine** statement."""
@@ -568,7 +568,7 @@ class InternalNode(SchemaNode):
         if not sctx.schema_data.if_features(stmt, sctx.text_mid):
             target.parent.children.remove(target)
         else:
-            target._handle_substatements(stmt, sctx)
+            target.handle_substatements(stmt, sctx)
 
     def _uses_stmt(self, stmt: Statement, sctx: SchemaContext) -> None:
         """Handle uses statement."""
@@ -580,9 +580,9 @@ class InternalNode(SchemaNode):
             self._add_child(sn)
         else:
             sn = self
-        sn._handle_substatements(grp, gid)
+        sn.handle_substatements(grp, gid)
         for augst in stmt.find_all("augment"):
-            sn._augment_stmt(augst, sctx)
+            sn.augment_stmt(augst, sctx)
         for refst in stmt.find_all("refine"):
             sn._refine_stmt(refst, sctx)
 
@@ -642,7 +642,7 @@ class InternalNode(SchemaNode):
         """Handle anydata statement."""
         self._handle_child(AnydataNode(), stmt, sctx)
 
-    def _ascii_tree(self, indent: str, no_types: bool) -> str:
+    def ascii_tree(self, indent: str, no_types: bool) -> str:
         """Return the receiver's subtree as ASCII art."""
         if not self.children:
             return ""
@@ -653,9 +653,9 @@ class InternalNode(SchemaNode):
         res = ""
         for c in cs[:-1]:
             res += (indent + c._tree_line(no_types) + "\n" +
-                    c._ascii_tree(indent + "|  ", no_types))
+                    c.ascii_tree(indent + "|  ", no_types))
         return (res + indent + cs[-1]._tree_line(no_types) + "\n" +
-                cs[-1]._ascii_tree(indent + "   ", no_types))
+                cs[-1].ascii_tree(indent + "   ", no_types))
 
 
 class GroupNode(InternalNode):
@@ -683,12 +683,18 @@ class GroupNode(InternalNode):
 
 
 class SchemaTreeNode(GroupNode):
-    """Root node of a schema tree."""
+    """Root node of a schema tree.
+
+    Attributes:
+        annotations: Dictionary of annotation definitions.
+    """
+    annotations: Dict[QualName, Annotation]
 
     def __init__(self):
         """Initialize the class instance."""
         super().__init__()
-        self.annotations = {}  # type: Dict[QualName, Annotation]
+        self.annotations = {}
+        self._ctype = ContentType.all
 
     def data_parent(self) -> InternalNode:
         """Override the superclass method."""
@@ -814,8 +820,8 @@ class TerminalNode(SchemaNode):
             raise RawTypeError(jptr, self.type.yang_type() + " value")
         return res
 
-    def _node_digest(self) -> Dict[str, Any]:
-        res = super()._node_digest()
+    def node_digest(self) -> Dict[str, Any]:
+        res = super().node_digest()
         res["type"] = self.type._type_digest(self.config)
         df = self.default
         if df is not None:
@@ -844,8 +850,8 @@ class TerminalNode(SchemaNode):
         inst.value = self.default
         return inst
 
-    def _post_process(self) -> None:
-        super()._post_process()
+    def post_process(self) -> None:
+        super().post_process()
         if isinstance(self.type, LeafrefType):
             ref = self._follow_leafref(self.type.path, self)
             if ref is None:
@@ -859,7 +865,7 @@ class TerminalNode(SchemaNode):
         di = self._default_instance(inst, ContentType.all)
         return [] if di is None else [self]
 
-    def _ascii_tree(self, indent: str, no_types: bool) -> str:
+    def ascii_tree(self, indent: str, no_types: bool) -> str:
         return ""
 
     def _state_roots(self) -> List[SchemaNode]:
@@ -879,8 +885,8 @@ class ContainerNode(DataNode, InternalNode):
         """Is the receiver a mandatory node?"""
         return not self.presence and super().mandatory
 
-    def _node_digest(self) -> Dict[str, Any]:
-        res = super()._node_digest()
+    def node_digest(self) -> Dict[str, Any]:
+        res = super().node_digest()
         res["presence"] = self.presence
         return res
 
@@ -950,8 +956,8 @@ class SequenceNode(DataNode):
                 len(inst.value) > self.max_elements):
             raise SemanticError(inst.json_pointer(), "too-many-elements")
 
-    def _post_process(self) -> None:
-        super()._post_process()
+    def post_process(self) -> None:
+        super().post_process()
         if self.min_elements > 0:
             self.parent._add_mandatory_child(self)
 
@@ -1008,8 +1014,8 @@ class ListNode(SequenceNode, InternalNode):
         self._key_members = []
         self.unique = []  # type: List[List[SchemaRoute]]
 
-    def _node_digest(self) -> Dict[str, Any]:
-        res = super()._node_digest()
+    def node_digest(self) -> Dict[str, Any]:
+        res = super().node_digest()
         res["keys"] = self._key_members
         return res
 
@@ -1050,8 +1056,8 @@ class ListNode(SequenceNode, InternalNode):
                           lazy: bool = False) -> "InstanceNode":
         return pnode
 
-    def _post_process(self) -> None:
-        super()._post_process()
+    def post_process(self) -> None:
+        super().post_process()
         for k in self.keys:
             kn = self.get_data_child(*k)
             self._key_members.append(kn.iname())
@@ -1136,8 +1142,8 @@ class ChoiceNode(InternalNode):
             prev = SchemaPattern.optional(prev)
         return ConditionalPattern(prev, self.when) if self.when else prev
 
-    def _post_process(self) -> None:
-        super()._post_process()
+    def post_process(self) -> None:
+        super().post_process()
         if self._mandatory:
             self.parent._add_mandatory_child(self)
 
@@ -1207,8 +1213,8 @@ class LeafNode(DataNode, TerminalNode):
             return self._default
         return self.type.default
 
-    def _post_process(self) -> None:
-        super()._post_process()
+    def post_process(self) -> None:
+        super().post_process()
         if self._mandatory:
             self.parent._add_mandatory_child(self)
         elif self._default is not None:
@@ -1249,8 +1255,8 @@ class LeafListNode(SequenceNode, TerminalNode):
         else:
             self._default.append(stmt.argument)
 
-    def _post_process(self) -> None:
-        super()._post_process()
+    def post_process(self) -> None:
+        super().post_process()
         if self._default is not None:
             self._default = ArrayValue(
                 [self.type.from_yang(v) for v in self._default])
@@ -1270,7 +1276,10 @@ class AnyContentNode(DataNode):
 
     def content_type(self) -> ContentType:
         """Override superclass method."""
-        return TerminalNode.content_type(self)
+        if self._ctype:
+            return self._ctype
+        return (ContentType.config if self.parent.config else
+                ContentType.nonconfig)
 
     @property
     def mandatory(self) -> bool:
@@ -1296,10 +1305,10 @@ class AnyContentNode(DataNode):
     def _tree_line(self, no_type: bool = False) -> str:
         return super()._tree_line() + ("" if self._mandatory else "?")
 
-    def _ascii_tree(self, indent: str, no_types: bool) -> str:
+    def ascii_tree(self, indent: str, no_types: bool) -> str:
         return ""
 
-    def _post_process(self) -> None:
+    def post_process(self) -> None:
         if self._mandatory:
             self.parent._add_mandatory_child(self)
 
@@ -1323,10 +1332,10 @@ class RpcActionNode(SchemaTreeNode):
         self.default_deny = DefaultDeny.none  # type: "DefaultDeny"
         self._ctype = ContentType.nonconfig
 
-    def _handle_substatements(self, stmt: Statement, sctx: SchemaContext) -> None:
+    def handle_substatements(self, stmt: Statement, sctx: SchemaContext) -> None:
         self._add_child(InputNode(sctx.default_ns))
         self._add_child(OutputNode(sctx.default_ns))
-        super()._handle_substatements(stmt, sctx)
+        super().handle_substatements(stmt, sctx)
 
     def _flatten(self) -> List[SchemaNode]:
         return [self]
@@ -1336,11 +1345,11 @@ class RpcActionNode(SchemaTreeNode):
 
     def _input_stmt(self, stmt: Statement, sctx: SchemaContext) -> None:
         """Handle RPC or action input statement."""
-        self.get_child("input")._handle_substatements(stmt, sctx)
+        self.get_child("input").handle_substatements(stmt, sctx)
 
     def _output_stmt(self, stmt: Statement, sctx: SchemaContext) -> None:
         """Handle RPC or action output statement."""
-        self.get_child("output")._handle_substatements(stmt, sctx)
+        self.get_child("output").handle_substatements(stmt, sctx)
 
 
 class InputNode(SchemaTreeNode):
@@ -1349,7 +1358,7 @@ class InputNode(SchemaTreeNode):
     def __init__(self, ns):
         """Initialize the class instance."""
         super().__init__()
-        self._config = False
+        self._ctype = ContentType.nonconfig
         self.name = "input"
         self.ns = ns
 
@@ -1366,7 +1375,7 @@ class OutputNode(SchemaTreeNode):
     def __init__(self, ns):
         """Initialize the class instance."""
         super().__init__()
-        self._config = False
+        self._ctype = ContentType.nonconfig
         self.name = "output"
         self.ns = ns
 

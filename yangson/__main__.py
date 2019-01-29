@@ -33,7 +33,7 @@ from yangson.exceptions import (
 
 def main(ylib: str = None, path: str = None,
          scope: ValidationScope = ValidationScope.all,
-         ctype: ContentType = ContentType.config, set_id: bool = False,
+         ctype: ContentType = ContentType.config, content_id: bool = False,
          tree: bool = False, no_types: bool = False,
          digest: bool = False, validate: str = None) -> int:
     """Entry-point for a validation script.
@@ -43,7 +43,7 @@ def main(ylib: str = None, path: str = None,
         path: Colon-separated list of directories to search  for YANG modules.
         scope: Validation scope (syntax, semantics or all).
         ctype: Content type of the data instance (config, nonconfig or all)
-        set_id: If `True`, print module set id.
+        content_id: If `True`, print module set id.
         tree: If `True`, print schema tree.
         no_types: If `True`, don't print types in schema tree.
         digest: If `True`, print schema digest.
@@ -70,7 +70,7 @@ def main(ylib: str = None, path: str = None,
         grp = parser.add_mutually_exclusive_group()
         grp.add_argument(
             "-i", "--id", action="store_true",
-            help="print module set id")
+            help="print data model id")
         grp.add_argument(
             "-t", "--tree", action="store_true",
             help="print schema tree as ASCII art")
@@ -95,7 +95,7 @@ def main(ylib: str = None, path: str = None,
         path: Optional[str] = args.path
         scope = ValidationScope[args.scope]
         ctype = ContentType[args.ctype]
-        set_id: bool = args.id
+        content_id: bool = args.id
         tree: bool = args.tree
         no_types = args.no_types
         digest: bool = args.digest
@@ -125,8 +125,8 @@ def main(ylib: str = None, path: str = None,
     except ModuleNotRegistered as e:
         print("Module not registered:", str(e), file=sys.stderr)
         return 2
-    if set_id:
-        print(dm.module_set_id())
+    if content_id:
+        print(dm.content_id())
         return 0
     if tree:
         print(dm.ascii_tree(no_types))

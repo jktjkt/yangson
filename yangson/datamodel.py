@@ -24,78 +24,33 @@ This module implements the following class:
 
 import hashlib
 import json
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 from .enumerations import ContentType
 from .exceptions import BadYangLibraryData
 from .instance import (InstanceRoute, InstanceIdParser, ResourceIdParser,
                        RootNode)
 from .schemadata import SchemaData, SchemaContext
 from .schemanode import DataNode, SchemaTreeNode, RawObject, SchemaNode
-from .typealiases import DataPath, SchemaPath
+from .typealiases import DataPath, SchemaPath, YangIdentifier
 
 
-class DataModel:
-    """Basic user-level entry point to Yangson library."""
+class Datastore:
+    """Container for a datastore schema.
+    
+    Attributes:
+        schema: Root of the schema tree.
+        content_type: Content type of the datastore.
+    """
+    content_type: ContentType
+    schema: SchemaTreeNode
+    schema_data: SchemaData
 
-    @classmethod
-    def from_file(cls, name: str, mod_path: Tuple[str] = (".",),
-                  description: str = None) -> "DataModel":
-        """Initialize the data model from a file with YANG library data.
-
-        Args:
-            name: Name of a file with YANG library data.
-            mod_path: Tuple of directories where to look for YANG modules.
-            description:  Optional description of the data model.
-
-        Returns:
-            The data model instance.
-
-        Raises:
-            The same exceptions as the class constructor above.
-        """
-        with open(name, encoding="utf-8") as infile:
-            yltxt = infile.read()
-        return cls(yltxt, mod_path, description)
-
-    def __init__(self, yltxt: str, mod_path: Tuple[str] = (".",),
-                 description: str = None):
-        """Initialize the class instance.
-
-        Args:
-            yltxt: JSON text with YANG library data.
-            mod_path: Tuple of directories where to look for YANG modules.
-            description: Optional description of the data model.
-
-        Raises:
-            BadYangLibraryData: If YANG library data is invalid.
-            FeaturePrerequisiteError: If a pre-requisite feature isn't
-                supported.
-            MultipleImplementedRevisions: If multiple revisions of an
-                implemented module are listed in YANG library.
-            ModuleNotFound: If a YANG module wasn't found in any of the
-                directories specified in `mod_path`.
-        """
-        self.schema = SchemaTreeNode()
-        self.schema._ctype = ContentType.all
-        try:
-            self.yang_library = json.loads(yltxt)
-        except json.JSONDecodeError as e:
-            raise BadYangLibraryData(str(e)) from None
-        self.schema_data = SchemaData(self.yang_library, mod_path)
-        self._build_schema()
-        self.schema.description = description if description else (
-            "Data model ID: " +
-            self.yang_library["ietf-yang-library:modules-state"]
-            ["module-set-id"])
-
-    def module_set_id(self) -> str:
-        """Compute unique id of YANG modules comprising the data model.
-
-        Returns:
-            String consisting of hexadecimal digits.
-        """
-        fnames = sorted(["@".join(m) for m in self.schema_data.modules])
-        return hashlib.sha1("".join(fnames).encode("ascii")).hexdigest()
+    def __init__(self, schema: SchemaTreeNode, schema_data: SchemaData,
+                 content_type: ContentType = ContentType.config):
+        """Initialize the class instance."""
+        self.content_type = content_type
+        self.schema_data = schema_data
+        self.schema = schema
 
     def from_raw(self, robj: RawObject) -> RootNode:
         """Create an instance node from a raw data tree.
@@ -153,9 +108,10 @@ class DataModel:
         Returns:
             String with the ASCII tree.
         """
-        return self.schema._ascii_tree("", no_types)
+        return self.schema.ascii_tree("", no_types)
 
-    def parse_instance_id(self, text: str) -> InstanceRoute:
+    @staticmethod
+    def parse_instance_id(text: str) -> InstanceRoute:
         return InstanceIdParser(text).parse()
 
     def parse_resource_id(self, text: str) -> InstanceRoute:
@@ -167,21 +123,94 @@ class DataModel:
         Returns:
             Condensed information about the schema in JSON format.
         """
-        res = self.schema._node_digest()
+        res = self.schema.node_digest()
         res["config"] = True
         return json.dumps(res)
 
-    def _build_schema(self) -> None:
-        for mid in self.schema_data._module_sequence:
-            sctx = SchemaContext(
-                self.schema_data, self.schema_data.namespace(mid), mid)
-            self.schema._handle_substatements(
-                self.schema_data.modules[mid].statement, sctx)
-        for mid in self.schema_data._module_sequence:
-            sctx = SchemaContext(
-                self.schema_data, self.schema_data.namespace(mid), mid)
-            mod = self.schema_data.modules[mid].statement
+
+class DataModel:
+    """Basic user-level entry point to Yangson library.
+
+    Attributes:
+        datastores: Dictionary of available datastore schemas.
+        yang_library: YANG library object.
+    """
+    datastores: Dict[YangIdentifier, Datastore]
+    description: str
+    yang_library: Dict[YangIdentifier, Dict]
+
+    @classmethod
+    def from_file(cls, name: str, mod_path: Tuple[str, ...] = (".",),
+                  description: str = None) -> "DataModel":
+        """Initialize the data model from a file with YANG library data.
+
+        Args:
+            name: Name of a file with YANG library data.
+            mod_path: Tuple of directories where to look for YANG modules.
+            description:  Optional description of the data model.
+
+        Returns:
+            The data model instance.
+
+        Raises:
+            The same exceptions as the class constructor.
+        """
+
+        with open(name, encoding="utf-8") as infile:
+            yltxt = infile.read()
+        return cls(yltxt, mod_path, description)
+
+    def __init__(self, yltxt: str, mod_path: Tuple[str, ...] = (".",),
+                 description: str = None):
+        """Initialize the class instance.
+
+        Args:
+            yltxt: JSON text with YANG library data.
+            mod_path: Tuple of directories where to look for YANG modules.
+            description: Optional description of the data model.
+
+        Raises:
+            BadYangLibraryData: If YANG library data is invalid.
+            FeaturePrerequisiteError: If a pre-requisite feature isn't
+                supported.
+            MultipleImplementedRevisions: If multiple revisions of an
+                implemented module are listed in YANG library.
+            ModuleNotFound: If a YANG module wasn't found in any of the
+                directories specified in `mod_path`.
+        """
+        self.datastores = {}
+        self.description = description
+        try:
+            self.yang_library = json.loads(yltxt)
+        except json.JSONDecodeError as e:
+            raise BadYangLibraryData(str(e)) from None
+        if "ietf-yang-library:modules-state" in self.yang_library:  # RFC 7895
+            root = SchemaTreeNode()
+            sdata = SchemaData(self.yang_library, mod_path)
+            self._build_schema(root, sdata)
+            self.datastores["config"] = Datastore(root, sdata)
+            self.datastores["operational"] = Datastore(root, sdata, ContentType.all)
+        else:
+            raise BadYangLibraryData("top-level member not recognized")
+
+    def content_id(self) -> str:
+        """Compute unique id of the data model.
+
+        Returns:
+            String consisting of hexadecimal digits.
+        """
+        # return hashlib.sha1("".join(fnames).encode("ascii")).hexdigest()
+        return "TODO"
+
+    @staticmethod
+    def _build_schema(schema: SchemaTreeNode, schema_data: SchemaData) -> None:
+        for mid in schema_data.module_sequence:
+            sctx = SchemaContext(schema_data, schema_data.namespace(mid), mid)
+            schema.handle_substatements(schema_data.modules[mid].statement, sctx)
+        for mid in schema_data.module_sequence:
+            sctx = SchemaContext(schema_data, schema_data.namespace(mid), mid)
+            mod = schema_data.modules[mid].statement
             for aug in mod.find_all("augment"):
-                self.schema._augment_stmt(aug, sctx)
-        self.schema._post_process()
-        self.schema._make_schema_patterns()
+                schema.augment_stmt(aug, sctx)
+        schema.post_process()
+        schema.make_schema_patterns()

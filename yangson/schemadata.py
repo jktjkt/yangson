@@ -86,7 +86,7 @@ class SchemaData:
             mod_path: List of directories to search for YANG modules.
     """
 
-    def __init__(self, yang_lib: Dict[str, Any], mod_path: List[str]) -> None:
+    def __init__(self, yang_lib: Dict[str, Any], mod_path: Tuple[str, ...]) -> None:
         """Initialize the schema structures."""
         self.identity_adjs = {}  # type: Dict[QualName, IdentityAdjacency]
         """Dictionary of identity bases."""
@@ -96,12 +96,12 @@ class SchemaData:
         """List of directories where to look for YANG modules."""
         self.modules = {}  # type: Dict[ModuleId, ModuleData]
         """Dictionary of module data."""
-        self._module_sequence = []  # type: List[ModuleId]
+        self.module_sequence = []  # type: List[ModuleId]
         """List that defines the order of module processing."""
-        self._from_yang_library(yang_lib)
+        self._from_yang_library_7895(yang_lib)
 
-    def _from_yang_library(self, yang_lib: Dict[str, Any]) -> None:
-        """Set the schema structures from YANG library data.
+    def _from_yang_library_7895(self, yang_lib: Dict[YangIdentifier, Any]) -> None:
+        """Set the schema structures from old-style (RFC 7895) YANG library data.
 
         Args:
             yang_lib: Dictionary with YANG library data.
@@ -196,8 +196,8 @@ class SchemaData:
             raise CyclicImports()
         while free:
             nid = free.pop()
-            self._module_sequence.append(nid)
-            self._module_sequence.extend(self.modules[nid].submodules)
+            self.module_sequence.append(nid)
+            self.module_sequence.extend(self.modules[nid].submodules)
             for mid in impby[nid]:
                 deps[mid].remove(nid)
                 if len(deps[mid]) == 0:
@@ -297,7 +297,7 @@ class SchemaData:
             UnknownPrefix: If the prefix specified in `pname` is not declared.
         """
         loc, nid = self.resolve_pname(pname, mid)
-        return (loc, self.namespace(nid))
+        return loc, self.namespace(nid)
 
     def translate_node_id(self, ni: PrefName, sctx: SchemaContext) -> QualName:
         """Translate node identifier to a qualified name.
@@ -318,7 +318,7 @@ class SchemaData:
         except KeyError:
             raise ModuleNotRegistered(*sctx.text_mid) from None
         try:
-            return (loc, self.namespace(mdata.prefix_map[p]))
+            return loc, self.namespace(mdata.prefix_map[p])
         except KeyError:
             raise UnknownPrefix(p, sctx.text_mid) from None
 

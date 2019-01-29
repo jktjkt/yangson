@@ -33,6 +33,7 @@ from datetime import datetime
 import json
 from typing import Dict, List, Optional, Tuple, Union
 from urllib.parse import unquote
+
 from .enumerations import ContentType, ValidationScope
 from .exceptions import (BadSchemaNodeType, EndOfInput, InstanceException,
                          InstanceValueError, InvalidKeyValue,
@@ -483,7 +484,7 @@ class InstanceNode:
 class RootNode(InstanceNode):
     """This class represents the root of the instance tree."""
 
-    def __init__(self, value: Value, schema_node: "DataNode",
+    def __init__(self, value: Value, schema_node: "SchemaTreeNode",
                  timestamp: datetime):
         super().__init__("/", value, None, schema_node, timestamp)
 
@@ -999,7 +1000,7 @@ class EntryKeys:
 class ResourceIdParser(Parser):
     """Parser for RESTCONF resource identifiers."""
 
-    def __init__(self, text: str, sn: "DataNode"):
+    def __init__(self, text: str, sn: "SchemaNode"):
         """Extend the superclass method.
 
         Args:
@@ -1117,6 +1118,6 @@ class InstanceIdParser(Parser):
         return EntryKeys(sel)
 
 
-from .schemanode import (AnydataNode, CaseNode, ChoiceNode, DataNode,       # NOQA
-                         InternalNode, LeafNode, LeafListNode, ListNode,
-                         RpcActionNode, SequenceNode, TerminalNode)
+from .schemanode import (CaseNode, DataNode, InternalNode, LeafListNode,  # NOQA
+                         ListNode, RpcActionNode, SequenceNode, SchemaNode,
+                         SchemaTreeNode)
